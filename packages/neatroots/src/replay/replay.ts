@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import type { Roots } from "../core.js";
 import { loadTrace, runGoal } from "../engine/trace.js";
 import { toBatches, type SpanNode } from "../ingest/build.js";
@@ -261,7 +262,7 @@ export class Replays {
         };
         if (o.model) env.NEATROOTS_REPLAY_MODEL = o.model;
         if (o.system) env.NEATROOTS_REPLAY_SYSTEM_PROMPT = o.system;
-        const code = await new Promise<number | null>((resolve) => {
+        const { code, error } = await new Promise<{ code: number | null; error?: Error }>((resolve) => {
           const child = spawn(target.command!, { shell: true, cwd: target.cwd, env });
           const keep = (b: Buffer) => {
             tail = (tail + b.toString()).slice(-6000);
@@ -271,9 +272,22 @@ export class Replays {
           const timer = setTimeout(() => child.kill("SIGTERM"), 15 * 60_000);
           child.on("close", (c) => {
             clearTimeout(timer);
-            resolve(c);
+            resolve({ code: c });
+          });
+          // A command that can't start (its folder was deleted, say) emits "error" instead of "close";
+          // unhandled, that event would stop the whole neatroots process.
+          child.on("error", (e) => {
+            clearTimeout(timer);
+            resolve({ code: null, error: e });
           });
         });
+        if (error) {
+          throw new Error(
+            target.cwd && !fs.existsSync(target.cwd)
+              ? `the rerun folder ${target.cwd} doesn't exist. Register it again: neatroots rerun add ${project} "<command>" --cwd <dir>`
+              : `couldn't start the rerun command: ${error.message}`,
+          );
+        }
         if (code !== 0) log.info(`replay ${r.id}: the agent exited with ${code}`);
       }
       // Spans arrive on the SDK's flush interval; give the run a moment to land.
