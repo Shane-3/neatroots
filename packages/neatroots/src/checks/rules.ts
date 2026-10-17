@@ -29,13 +29,25 @@ function jsonKey(value: unknown): string {
   });
 }
 
+/**
+ * A call's arguments or result, for comparing calls. Content that wasn't recorded (capture
+ * turned off, or kept in attributes neatroots doesn't read) is unknown, not empty, so it gets
+ * a key of its own: two calls with no recorded arguments are not "the same call". A missing
+ * result beside recorded arguments is a tool that returned nothing, and compares as empty.
+ */
+function contentKey(s: SpanInfo, field: "input" | "output"): string {
+  const v = s[field];
+  if ((v === undefined || v === null) && (field === "input" || s.input === undefined || s.input === null)) return `\u0001${s.id}`;
+  return jsonKey(v);
+}
+
 function keyOf(s: SpanInfo, fields: string[]): string {
   return fields
     .map((f) => {
       if (f === "tool") return s.toolName ?? s.name;
       if (f === "name") return s.name;
-      if (f === "input") return jsonKey(s.input);
-      if (f === "output") return jsonKey(s.output);
+      if (f === "input") return contentKey(s, "input");
+      if (f === "output") return contentKey(s, "output");
       if (f === "status") return s.status;
       return "";
     })
@@ -312,7 +324,7 @@ export function evaluateRule(check: RuleCheck, t: TraceSnapshot, atEnd: boolean,
     case "cycle": {
       const spans = selectSpans(t.spans, r.span).sort((a, b) => a.endMs - b.endMs);
       const names = spans.map((s) => s.toolName ?? s.name);
-      const outs = spans.map((s) => jsonKey(s.output));
+      const outs = spans.map((s) => contentKey(s, "output"));
       // Stretches of the call list that are one short pattern repeated with no new results, found
       // in one pass per period. One still holds if it reaches the newest call or a fresh span
       // completed it; otherwise the newest stretch is reported as one the agent broke out of.
